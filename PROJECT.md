@@ -1,170 +1,169 @@
-# QNAP-EC na TVS-h1288X + Proxmox VE
+# QNAP-EC on TVS-h1288X + Proxmox VE
 
-## Co zostało zrobione
+## What was done
 
-### Problem wyjściowy
-QNAP TVS-h1288X z zainstalowanym Proxmox VE nie miał dostępu do sensorów
-embedded controllera IT8528 — brak odczytu prędkości wentylatorów i sterowania PWM.
+### The problem
+QNAP TVS-h1288X running Proxmox VE had no access to the IT8528 embedded controller sensors —
+no fan speed readings and no PWM control. As a result, fans would spin up to full speed
+whenever CPU load exceeded ~20%, making the machine extremely loud.
 
-### Rozwiązanie
-Zainstalowano sterownik [QNAP-EC](https://github.com/Stonyx/QNAP-EC) (Stonyx)
-— otwartoźródłowy moduł kernela dla układu IT8528.
+### Solution
+Installed the [QNAP-EC](https://github.com/Stonyx/QNAP-EC) driver (by Stonyx)
+— an open-source kernel module for the ITE IT8528 embedded controller.
 
-### Środowisko
-- **Sprzęt**: QNAP TVS-h1288X, Intel Xeon W-1250, EC chip: ITE IT8528
-- **System**: Proxmox VE, Debian 12.10, kernel `6.8.12-9-pve`
-- **Host PVE**: `<pve-host>`
+### Environment
+- **Hardware**: QNAP TVS-h1288X, Intel Xeon W-1250, EC chip: ITE IT8528
+- **OS**: Proxmox VE, Debian 12.10, kernel `6.8.12-9-pve`
+- **PVE host**: `<pve-host>`
 
-### Przebieg instalacji
+### Installation steps
 
-1. **Analiza kodu źródłowego** — weryfikacja bezpieczeństwa sterownika
-2. **Wykrycie architektury** — ustalenie, że sterownik musi działać na hoście PVE,
-   nie wewnątrz VM
-3. **Instalacja zależności** na hoście PVE:
+1. **Source code review** — security audit of the driver
+2. **Architecture decision** — the driver must run on the PVE host, not inside a VM
+3. **Install dependencies** on the PVE host:
    ```
    sudo apt install pve-headers-$(uname -r) gcc make
    ```
-4. **Kompilacja i instalacja**:
+4. **Build and install**:
    ```
    sudo make install
    ```
-5. **Weryfikacja** — moduł załadował się, chip IT8528 wykryty automatycznie
-6. **Autostart** — dodano `qnap-ec` do `/etc/modules`
+5. **Verification** — module loaded successfully, IT8528 chip detected automatically
+6. **Autostart** — added `qnap-ec` to `/etc/modules`
 
-### Kluczowe odkrycie
-Biblioteka `libuLinux_hal.so` dołączona do repo (pobrana z QNAP TS-873A)
-**działa poprawnie** na TVS-h1288X bez żadnych modyfikacji.
-Możliwe dlatego, że obie platformy używają tego samego układu IT8528 i
-zależności od QTS-specyficznych plików (`/etc/model.conf`) są zamockowane
-w helperze przez flagę `-export-dynamic`.
+### Key finding
+The `libuLinux_hal.so` library bundled in the repo (taken from a QNAP TS-873A)
+**works correctly** on TVS-h1288X without any modifications.
+Likely because both platforms use the same IT8528 chip and the QTS-specific
+file dependencies (`/etc/model.conf`) are stubbed out in the helper via the `-export-dynamic` flag.
 
 ---
 
-## Aktywne sensory
+## Active sensors
 
-Urządzenie `qnap_ec` (`/sys/class/hwmon/hwmon19/`) — numer `hwmon19` może się zmienić po restarcie.
-Wykryj dynamicznie: `grep -rl qnap_ec /sys/class/hwmon/*/name | head -1 | xargs dirname`
+Device `qnap_ec` (`/sys/class/hwmon/hwmon19/`) — the `hwmon19` number may change after a reboot.
+Detect dynamically: `grep -rl qnap_ec /sys/class/hwmon/*/name | head -1 | xargs dirname`
 
-### Temperatury
-| Sensor | Kanał EC | Typowa wartość | Opis |
+### Temperatures
+| Sensor | EC channel | Typical value | Description |
 |---|---|---|---|
-| temp1_input | EC #1 | ~67°C | CPU zone (thermistor EC przy CPU) |
-| temp6_input | EC #6 | ~35°C | Strefa dysków |
-| temp7_input | EC #7 | ~35°C | Strefa dysków 2 |
-| temp8_input | EC #8 | ~20°C | Ambient / wlot powietrza |
+| temp1_input | EC #1 | ~67°C | CPU zone (EC thermistor near CPU) |
+| temp6_input | EC #6 | ~35°C | Drive bay zone 1 |
+| temp7_input | EC #7 | ~35°C | Drive bay zone 2 |
+| temp8_input | EC #8 | ~20°C | Ambient / air intake |
 
-### Wentylatory
-| Sensor | Kanał EC | Typowa wartość | Opis |
+### Fans
+| Sensor | EC channel | Typical value | Description |
 |---|---|---|---|
-| fan1_input | EC fan1 | ~1900 RPM | Wentylator chassis 1 |
-| fan2_input | EC fan2 | ~1900 RPM | Wentylator chassis 2 |
-| fan3_input | EC fan3 | ~1875 RPM | Wentylator chassis 3 |
-| fan4_input | EC fan4 | ~1880 RPM | Wentylator chassis 4 |
-| fan7_input | EC fan7 | ~750 RPM | Wentylator CPU 1 |
-| fan8_input | EC fan8 | ~720 RPM | Wentylator CPU 2 |
+| fan1_input | EC fan1 | ~1900 RPM | Chassis fan 1 |
+| fan2_input | EC fan2 | ~1900 RPM | Chassis fan 2 |
+| fan3_input | EC fan3 | ~1875 RPM | Chassis fan 3 |
+| fan4_input | EC fan4 | ~1880 RPM | Chassis fan 4 |
+| fan7_input | EC fan7 | ~750 RPM | CPU fan 1 |
+| fan8_input | EC fan8 | ~720 RPM | CPU fan 2 |
 
-### PWM (sterowanie)
-| Sensor | Wartość (0-255) | Duty cycle | Steruje |
+### PWM (control)
+| Sensor | Value (0-255) | Duty cycle | Controls |
 |---|---|---|---|
 | pwm1 | 102 | ~40% | fan1-4 (chassis) |
 | pwm7 | 73 | ~29% | fan7-8 (CPU) |
 
 ---
 
-## Zainstalowane pliki
+## Installed files
 
-| Plik | Lokalizacja | Opis |
+| File | Location | Description |
 |---|---|---|
-| `qnap-ec.ko` | `/lib/modules/6.8.12-9-pve/updates/` | Moduł kernela |
-| `qnap-ec` | `/usr/local/sbin/` | Helper (user-space bridge) |
-| `libuLinux_hal.so` | `/usr/local/lib/` | Biblioteka QNAP (z TS-873A) |
-| `qnap-ec.conf` | `/etc/modprobe.d/` | Parametry modułu (`sim_pwm_enable=yes`) |
-| `fancontrol` | `/etc/fancontrol` | Konfiguracja sterowania wentylatorami |
-| `qnap-monitor` | `/usr/local/bin/` | Live dashboard termiczny (bash) |
+| `qnap-ec.ko` | `/lib/modules/6.8.12-9-pve/updates/` | Kernel module |
+| `qnap-ec` | `/usr/local/sbin/` | Helper binary (user-space bridge) |
+| `libuLinux_hal.so` | `/usr/local/lib/` | QNAP library (from TS-873A) |
+| `qnap-ec.conf` | `/etc/modprobe.d/` | Module parameters (`sim_pwm_enable=yes`) |
+| `fancontrol` | `/etc/fancontrol` | Fan control configuration |
+| `qnap-monitor` | `/usr/local/bin/` | Live thermal dashboard (bash) |
 
-Autostart: wpis `qnap-ec` w `/etc/modules`; `fancontrol` jako serwis systemd.
+Autostart: `qnap-ec` entry in `/etc/modules`; `fancontrol` as a systemd service.
 
 ---
 
-## TODO
+## Components
 
-### 1. Fancontrol — automatyczne sterowanie wentylatorami ✅ GOTOWE
+### 1. Fancontrol — automatic fan speed control ✅ DONE
 
-Zainstalowane i działające od 2026-02-28.
+Installed and running since 2026-02-28.
 
-#### Pliki konfiguracyjne
-- `/etc/modprobe.d/qnap-ec.conf` — włącza `sim_pwm_enable=yes` (wymagane przez fancontrol)
-- `/etc/fancontrol` — krzywe temp→PWM
-- `fancontrol/install.sh` — skrypt instalacyjny (do ponownego użycia po reinstalacji)
+#### Configuration files
+- `/etc/modprobe.d/qnap-ec.conf` — enables `sim_pwm_enable=yes` (required by fancontrol)
+- `/etc/fancontrol` — temp→PWM curves
+- `fancontrol/install.sh` — install script (reusable after reinstallation)
 
-#### Mapowanie kanałów
-| PWM | Sensor sterujący | Min temp | Max temp | Min PWM | Max PWM |
+#### Channel mapping
+| PWM | Controlling sensor | Min temp | Max temp | Min PWM | Max PWM |
 |---|---|---|---|---|---|
-| pwm1 (fan1-4, chassis) | temp6_input (dyski) | 30°C | 50°C | 80/255 | 255/255 |
+| pwm1 (fan1-4, chassis) | temp6_input (drives) | 30°C | 50°C | 80/255 | 255/255 |
 | pwm7 (fan7-8, CPU) | temp1_input (CPU zone) | 45°C | 85°C | 60/255 | 255/255 |
 
-#### Przykładowe wartości w działaniu
-- Dyski 32°C → chassis fans ~1800 RPM (37% PWM)
-- CPU zone 79°C → CPU fans ~2330 RPM (80% PWM)
+#### Example values in operation
+- Drives at 32°C → chassis fans ~1800 RPM (37% PWM)
+- CPU zone at 79°C → CPU fans ~2330 RPM (80% PWM)
 
-#### Przywracanie po aktualizacji kernela
-Po każdej aktualizacji PVE kernel należy przebudować moduł:
+#### Rebuilding after a kernel update
+After every PVE kernel update, rebuild and reinstall the module:
 ```bash
 cd ~/QNAP-EC && sudo make install
 sudo systemctl restart fancontrol
 ```
 
-### 2. Live dashboard — qnap-monitor ✅ GOTOWE
+### 2. Live dashboard — qnap-monitor ✅ DONE
 
-Plik: `fancontrol/qnap-monitor` (bash, instalacja: `/usr/local/bin/qnap-monitor`)
+File: `fancontrol/qnap-monitor` (bash, installed at `/usr/local/bin/qnap-monitor`)
 
-Dashboard odświeżany co N sekund (domyślnie 2s), pokazuje:
-- temperatury CPU (Package + per-core) z paskami `█░`
-- obciążenie każdego wątku HT (cpu0+cpu6, cpu1+cpu7, …)
-- temperatury EC Chip (CPU zone, dyski, ambient)
-- prędkości wentylatorów + aktualny PWM%
-- top 5 najgorętszych dysków
-- status serwisu fancontrol
+Dashboard refreshed every N seconds (default: 2s), displays:
+- CPU temperatures (Package + per-core) with `█░` bars
+- load per HT thread (cpu0+cpu6, cpu1+cpu7, …)
+- EC chip temperatures (CPU zone, drives, ambient)
+- fan speeds + current PWM%
+- top 5 hottest drives
+- fancontrol service status
 
 ```bash
-qnap-monitor        # co 2s
-qnap-monitor 5      # co 5s
-q                   # wyjście
+qnap-monitor        # refresh every 2s
+qnap-monitor 5      # refresh every 5s
+q                   # quit
 ```
 
-Hwmon wykrywane dynamicznie po nazwie (`qnap_ec`, `coretemp`) —
-odporne na zmiany numeracji po aktualizacji kernela.
+Hwmon paths are detected dynamically by name (`qnap_ec`, `coretemp`) —
+resilient to numbering changes after kernel updates.
 
-### 3. Monitoring długoterminowy — Grafana + node_exporter
+### 3. Long-term monitoring — Grafana + node_exporter
 
-Cel: wykresy temperatur, RPM i PWM w czasie.
+Goal: temperature, RPM and PWM charts over time.
 
 ```bash
-# Na hoście PVE — node_exporter eksponuje /sys/class/hwmon/*
+# On the PVE host — node_exporter exposes /sys/class/hwmon/*
 sudo apt install prometheus-node-exporter
-# Metryki: http://<pve-host>:9100/metrics  (node_hwmon_*)
+# Metrics: http://<pve-host>:9100/metrics  (node_hwmon_*)
 ```
 
-Dashboard Grafana: importuj ID `1860` (Node Exporter Full).
+Grafana dashboard: import ID `1860` (Node Exporter Full).
 
-### 4. Identyfikacja nieaktywnych kanałów
+### 4. Identifying inactive EC channels
 
-Kanały EC które nie zwróciły danych (temp2-5, fan5-6):
-- Mogą odpowiadać nieobecnym czujnikom (np. dodatkowe klatki)
-- Warto sprawdzić z parametrem `val_pwm_channels=n`:
+EC channels that returned no data (temp2-5, fan5-6):
+- May correspond to absent sensors (e.g. expansion bays)
+- Worth investigating with the `val_pwm_channels=n` parameter:
   ```bash
   sudo modprobe -r qnap-ec
   sudo modprobe qnap-ec val_pwm_channels=n
   ```
 
-### 5. Aktualizacja libuLinux_hal.so (opcjonalnie)
+### 5. Updating libuLinux_hal.so (optional)
 
-Jeśli pojawią się problemy z odczytami — można spróbować wyciągnąć
-natywną bibliotekę z firmware TVS-h1288X:
+If sensor readings become unreliable — try extracting the native library
+from the TVS-h1288X firmware:
 
 ```bash
 sudo apt install binwalk squashfs-tools
-# Pobierz firmware TVS-h1288X z support.qnap.com
+# Download TVS-h1288X firmware from support.qnap.com
 binwalk TVS-h1288X_*.img
-# Wyciągnij squashfs i znajdź /usr/lib/libuLinux_hal.so
+# Extract squashfs and locate /usr/lib/libuLinux_hal.so
 ```
