@@ -34,6 +34,13 @@ ssh -t <pve-host> "cd ~/qnap-ec-fan-monitor && git pull && sudo install -m 755 q
 ssh -t <pve-host> "cd ~/qnap-ec-fan-monitor && git pull && sudo make install && sudo systemctl restart fancontrol"
 ```
 
+## Sensitive data — never commit
+
+- Real IP addresses or hostnames (use `<pve-host>` as placeholder in docs)
+- Usernames specific to a machine
+- Passwords, tokens, API keys
+- Local file paths specific to a single machine
+
 ## Commit language
 
 English. Use Conventional Commits (see global git rules).

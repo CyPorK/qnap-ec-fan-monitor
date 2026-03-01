@@ -65,6 +65,41 @@ This will:
 
 > **After a kernel update:** `cd qnap-ec-fan-monitor && sudo make install && sudo systemctl restart fancontrol`
 
+### Verification
+
+After installation, confirm everything works:
+
+```bash
+# Module loaded — expect: qnap_ec  <size>  0
+lsmod | grep qnap_ec
+
+# hwmon device detected — expect: /sys/class/hwmon/hwmonX/name
+grep -rl qnap_ec /sys/class/hwmon/*/name
+
+# Fan readings — expect: RPM values e.g. 1900
+HW=$(grep -rl qnap_ec /sys/class/hwmon/*/name | xargs dirname)
+cat "$HW"/fan{1,2,3,4,7,8}_input
+
+# Temperature readings — expect: values in millidegrees e.g. 55000
+cat "$HW"/temp{1,6,7,8}_input
+
+# fancontrol running — expect: Active: active (running)
+systemctl status fancontrol --no-pager | grep Active
+
+# Live dashboard
+qnap-monitor
+```
+
+### Uninstall
+
+```bash
+sudo systemctl stop fancontrol
+sudo systemctl disable fancontrol
+sudo make uninstall
+sudo sed -i '/^qnap-ec$/d' /etc/modules
+sudo rm -f /etc/fancontrol /etc/modprobe.d/qnap-ec.conf
+```
+
 ### Tested on
 
 - **Hardware**: QNAP TVS-h1288X, Intel Xeon W-1250 (6C/12T), ITE IT8528 EC chip
