@@ -91,8 +91,13 @@ done
 echo ""
 echo "=== 9. Install fancontrol config ==="
 HW_NUM=${HW##*hwmon}
-sed "s/hwmon19/hwmon${HW_NUM}/g" "$SCRIPT_DIR/fancontrol" > /etc/fancontrol
-echo "  Saved: /etc/fancontrol (hwmon${HW_NUM})"
+if [ -f /etc/fancontrol ]; then
+    sed -i "s|hwmon[0-9]\+|hwmon${HW_NUM}|g" /etc/fancontrol
+    echo "  Updated hwmon number → hwmon${HW_NUM} (existing config preserved)"
+else
+    sed "s/hwmon19/hwmon${HW_NUM}/g" "$SCRIPT_DIR/fancontrol" > /etc/fancontrol
+    echo "  Saved: /etc/fancontrol (hwmon${HW_NUM})"
+fi
 
 echo ""
 echo "=== 10. Configure fancontrol restart policy ==="
