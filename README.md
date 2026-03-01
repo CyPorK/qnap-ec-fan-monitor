@@ -93,11 +93,11 @@ qnap-monitor
 ### Uninstall
 
 ```bash
-sudo systemctl stop fancontrol
-sudo systemctl disable fancontrol
-sudo make uninstall
-sudo sed -i '/^qnap-ec$/d' /etc/modules
-sudo rm -f /etc/fancontrol /etc/modprobe.d/qnap-ec.conf
+sudo systemctl stop fancontrol                       # stop fan control service
+sudo systemctl disable fancontrol                    # disable autostart
+sudo make uninstall                                  # remove kernel module, helper binary, library
+sudo sed -i '/^qnap-ec$/d' /etc/modules             # remove module from boot autoload
+sudo rm -f /etc/fancontrol /etc/modprobe.d/qnap-ec.conf  # remove config files
 ```
 
 ### Tested on
