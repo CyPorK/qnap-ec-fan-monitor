@@ -1,5 +1,63 @@
 # QNAP-EC - HWMon Driver for QNAP IT8528 E.C. Chips
 
+## What this fork adds — Proxmox VE + fancontrol + live dashboard
+
+This fork extends the original [QNAP-EC driver by Stonyx](https://github.com/Stonyx/QNAP-EC)
+with a working setup for **QNAP NAS running Proxmox VE** (or any Linux) instead of QuTS Hero.
+
+Without this, fans spin up to full speed whenever CPU load exceeds ~20%, making the machine
+extremely loud. This repo provides everything needed to fix that.
+
+### What's included
+
+| Component | Description |
+|---|---|
+| `fancontrol/qnap-ec.conf` | Module config — enables `sim_pwm_enable=yes` (required for fancontrol) |
+| `fancontrol/fancontrol` | Ready-to-use fancontrol config with temp→PWM curves for drives and CPU |
+| `fancontrol/install.sh` | One-shot install script for the full fancontrol setup |
+| `fancontrol/qnap-monitor` | Live terminal dashboard — temperatures, fan RPMs, CPU load |
+
+### qnap-monitor
+
+A `top`-like dashboard that refreshes every 2 seconds:
+
+```
+  -- CPU ------------------------------------------------------------------
+  Package:   61°C  [████████████░░░░░░░░]  61%   Total load: [███░░░░░░░░░░░░]  19%
+             temp              load cpu N (HT)       load cpu N+6 (HT)
+  Core 0:   56°C  [███████████░░░░░░░░░]  56%  cpu0 [██░░░░░░░░]  19%  cpu6 [██░░░░░░░░]  21%
+  ...
+
+  -- EC Chip (IT8528) ---------------------------------------------------
+  CPU zone (EC):    54°C  [███████████░░░░░░░░░░░]  54%
+  Drive zone 1:     29°C  [██████████░░░░░░░░░░░░]  48%
+  Ambient (intake): 20°C  [█████████░░░░░░░░░░░░░]  44%
+
+  -- Fans ---------------------------------------------------------------
+  Chassis (PWM  30%)
+    fan1:           1488 RPM  [██████████░░░░░░░░░░░░]  49%
+  ...
+
+  [OK] fancontrol active
+```
+
+Install globally:
+```bash
+sudo install -m 755 fancontrol/qnap-monitor /usr/local/bin/qnap-monitor
+qnap-monitor        # refresh every 2s
+qnap-monitor 5      # refresh every 5s  |  q = quit
+```
+
+### Tested on
+
+- **Hardware**: QNAP TVS-h1288X, Intel Xeon W-1250 (6C/12T), ITE IT8528 EC chip
+- **OS**: Proxmox VE 8, Debian 12, kernel `6.8.12-9-pve`
+
+See [PROJECT.md](PROJECT.md) for full installation details and sensor mapping.
+
+---
+
+
 A Linux hwmon driver kernel module for the QNAP IT8528 Embedded Controller chip (and possibly others).  This driver supports reading the fan speeds and temperatures as well as reading and writing the fan P.W.M. values from the ITE Tech Inc. IT8528 embedded controller chip that is used in many QNAP NAS models.  Because the IT8528 chip can run custom firmware this driver is most likely specific to the firmware that QNAP uses on these chips.  It is based on the reverse engineering knowledge originally gathered by [guedou](https://github.com/guedou) with lots of operational and testing help provided by [r-pufky](https://github.com/r-pufky).
 
 In order to provide the greatest compatibility, this driver uses a library that is supplied by QNAP in it's NAS operating system.  The libuLinux_hal library that is part of this repository was taken from a QNAP-TS873A model running QTS 4.5.4.1800.  In order to ensure proper functionality, you should replace the libuLinux_hal.so library file with one from the operating system image for the exact QNAP NAS model you will be running this driver on.  Because this driver uses the QNAP library it is conceivable that it will work with other chips used by QNAP that are supported by the libuLinux_hal library.
