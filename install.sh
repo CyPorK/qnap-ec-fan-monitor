@@ -75,8 +75,9 @@ done
 
 echo ""
 echo "=== 8. Install fancontrol config ==="
-cp "$SCRIPT_DIR/fancontrol" /etc/fancontrol
-echo "  Saved: /etc/fancontrol"
+HW_NUM=${HW##*hwmon}
+sed "s/hwmon19/hwmon${HW_NUM}/g" "$SCRIPT_DIR/fancontrol" > /etc/fancontrol
+echo "  Saved: /etc/fancontrol (hwmon${HW_NUM})"
 
 echo ""
 echo "=== 9. Enable and start fancontrol service ==="

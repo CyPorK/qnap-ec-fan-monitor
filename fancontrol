@@ -1,8 +1,8 @@
-# /etc/fancontrol
-# QNAP TVS-h1288X — konfiguracja sterowania wentylatorami
-# Wygenerowano: 2026-02-28
+# fancontrol — template for QNAP TVS-h1288X
+# install.sh substitutes hwmon19 with the actual hwmon number at install time.
+# Do not copy this file manually — use install.sh.
 #
-# Sensory (hwmon19 = qnap_ec):
+# Sensors (hwmon19 = qnap_ec template placeholder):
 #   temp1_input = CPU zone EC (~45-90°C)
 #   temp6_input = strefa dysków (~30-50°C)
 #   temp8_input = ambient / wlot powietrza (~18-30°C)
