@@ -16,7 +16,21 @@ Installed the [QNAP-EC](https://github.com/Stonyx/QNAP-EC) driver (by Stonyx)
 - **OS**: Proxmox VE, Debian 12.10, kernel `6.8.12-9-pve`
 - **PVE host**: `<pve-host>`
 
-### Installation steps
+### Quick install
+
+Run this on the **PVE host** (not inside a VM):
+
+```bash
+git clone https://github.com/CyPorK/qnap-fan-monitor
+cd qnap-fan-monitor
+sudo bash fancontrol/install.sh
+```
+
+This installs everything: kernel module, fancontrol, and qnap-monitor.
+
+> **After a kernel update:** `cd qnap-fan-monitor && sudo make install && sudo systemctl restart fancontrol`
+
+### Manual installation steps
 
 1. **Source code review** — security audit of the driver
 2. **Architecture decision** — the driver must run on the PVE host, not inside a VM
