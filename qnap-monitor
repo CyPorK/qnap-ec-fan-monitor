@@ -11,6 +11,7 @@ BOLD='\033[1m' REV='\033[7m' BLINK='\033[5m'
 
 # ── Logging / stress state ────────────────────────────────────────────────────
 LOG_ACTIVE=0; LOG_FILE=""; STRESS_PID=0; STRESS_ERROR=""
+command -v stress-ng &>/dev/null && HAS_STRESS_NG=1 || HAS_STRESS_NG=0
 PHASE="IDLE"; COOLDOWN_START=0
 
 # ── Fancontrol parsed values ──────────────────────────────────────────────────
@@ -377,7 +378,8 @@ while true; do
     [[ "$STRESS_PID" -ne 0 ]] && printf "${Y}[STRESS]${N} "
     [[ "$PHASE" != "IDLE"  ]] && printf "${C}[${PHASE}]${N} "
     [[ -n "$STRESS_ERROR"  ]] && printf "${Y}${STRESS_ERROR}${N} "
-    printf "${D}Interval: ${INTERVAL}s  |  q=quit l=log s=stress${N}\n\n"
+    local stress_hint; [[ "$HAS_STRESS_NG" -eq 1 ]] && stress_hint="s=stress" || stress_hint="s=stress (!)"
+    printf "${D}Interval: ${INTERVAL}s  |  q=quit l=log ${stress_hint}${N}\n\n"
 
     # Pre-read fan RPMs (needed for CSV; display reuses cat output below)
     fan1=$(cat "$HW/fan1_input" 2>/dev/null || echo 0)
