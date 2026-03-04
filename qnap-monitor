@@ -2,8 +2,29 @@
 # qnap-monitor — live dashboard: temperatures, fans, CPU load
 # QNAP TVS-h1288X + Proxmox VE
 # Usage: ./qnap-monitor [interval_in_seconds]
+#        ./qnap-monitor --analyze <file.csv>
 
-INTERVAL=${1:-2}
+# ── Colors ────────────────────────────────────────────────────────────────────
+R='\033[0;31m' Y='\033[0;33m' G='\033[0;32m'
+C='\033[0;36m' W='\033[1;37m' D='\033[2;37m' N='\033[0m'
+BOLD='\033[1m' REV='\033[7m' BLINK='\033[5m'
+
+# ── Logging / stress state ────────────────────────────────────────────────────
+LOG_ACTIVE=0; LOG_FILE=""; STRESS_PID=0; STRESS_ERROR=""
+PHASE="IDLE"; COOLDOWN_START=0
+
+# ── Fancontrol parsed values ──────────────────────────────────────────────────
+declare -A FC_MAXTEMP FC_MINTEMP FC_MINPWM FC_MAXPWM FC_TEMPS
+
+# ── CPU stat arrays (global — cannot declare inside functions) ────────────────
+declare -A snap_total snap_idle prev_total prev_idle
+
+# ── Core detection arrays (global) ───────────────────────────────────────────
+declare -a CORE_IDS=()
+declare -A CORE_TEMP=()  # core_id -> path to temp file
+declare -A CORE_CPUS=()  # core_id -> "cpu0 cpu6" (thread list, space-separated)
+
+# ── Functions ─────────────────────────────────────────────────────────────────
 
 # Auto-detect hwmon by name (resilient to numbering changes after reboot/kernel update)
 find_hwmon() {
@@ -14,15 +35,7 @@ find_hwmon() {
     return 1
 }
 
-HW=$(find_hwmon "qnap_ec")   || { printf 'ERROR: qnap_ec hwmon not found (is qnap-ec module loaded?)\n' >&2; exit 1; }
-CT=$(find_hwmon "coretemp")  || { printf 'ERROR: coretemp hwmon not found\n' >&2; exit 1; }
-
-# Colors
-R='\033[0;31m' Y='\033[0;33m' G='\033[0;32m'
-C='\033[0;36m' W='\033[1;37m' D='\033[2;37m' N='\033[0m'
-BOLD='\033[1m' REV='\033[7m'
-
-# Bar: bar <value> <max> <width>
+# bar <value> <max> <width>
 bar() {
     local val=$1 max=$2 width=${3:-20}
     [ "$max" -le 0 ] && max=1
@@ -52,7 +65,7 @@ temp_color() {
 read_temp() { awk '{printf "%d", $1/1000}' "$1" 2>/dev/null || echo 0; }
 
 # Parse CPU list from thread_siblings_list (e.g. "0,6" or "0-3,8-11")
-# Print each CPU on a separate line
+# Prints each CPU on a separate line
 expand_cpu_list() {
     local result=()
     IFS=',' read -ra parts <<< "$1"
@@ -67,10 +80,6 @@ expand_cpu_list() {
     done
     printf '%s\n' "${result[@]}"
 }
-
-# ── CPU stats (/proc/stat) ────────────────────────────────────────────────────
-# Global arrays — do NOT declare inside functions
-declare -A snap_total snap_idle prev_total prev_idle
 
 read_cpu_stats() {
     while read -r label user nice sys idle iowait irq softirq steal _; do
@@ -98,12 +107,214 @@ cpu_pct() {
     echo "$pct"
 }
 
-# ── Detect physical cores from coretemp ──────────────────────────────────────
-# Detect cores by "Core N" label, map to HT threads from thread_siblings_list
-declare -a CORE_IDS=()   # sorted physical core IDs
-declare -A CORE_TEMP=()  # core_id -> path to temp file
-declare -A CORE_CPUS=()  # core_id -> "cpu0 cpu6" (thread list, space-separated)
+# Parse /etc/fancontrol (or ./fancontrol) into FC_* associative arrays.
+# Key = PWM channel name without path prefix (e.g. pwm1, pwm7).
+parse_fancontrol() {
+    local cfg=""
+    [[ -f /etc/fancontrol ]] && cfg=/etc/fancontrol
+    [[ -z "$cfg" && -f ./fancontrol ]] && cfg=./fancontrol
+    [[ -z "$cfg" ]] && return 1
+    while IFS= read -r line; do
+        line="${line%%#*}"; [[ -z "${line// }" ]] && continue
+        local varname="${line%%=*}" pairs="${line#*=}"
+        case "$varname" in MAXTEMP|MINTEMP|MINPWM|MAXPWM|FCTEMPS)
+            for pair in $pairs; do
+                local pk="${pair%=*}"; pk="${pk##*/}"   # strip path → pwm1
+                local val="${pair#*=}"
+                case "$varname" in
+                    MAXTEMP) FC_MAXTEMP[$pk]="$val" ;;
+                    MINTEMP) FC_MINTEMP[$pk]="$val" ;;
+                    MINPWM)  FC_MINPWM[$pk]="$val"  ;;
+                    MAXPWM)  FC_MAXPWM[$pk]="$val"  ;;
+                    FCTEMPS) FC_TEMPS[$pk]="${val##*/}" ;;  # temp6_input
+                esac
+            done
+        esac
+    done < "$cfg"
+}
 
+start_logging() {
+    LOG_FILE="/tmp/qnap-stress-$(date '+%Y%m%d-%H%M%S').csv"
+    printf 'timestamp,phase,t1_ec,t6_ec,t7_ec,t8_ec,cpu_pkg,pwm1,pwm7,fan1,fan2,fan3,fan4,fan7,fan8\n' > "$LOG_FILE"
+    LOG_ACTIVE=1; PHASE="IDLE"
+}
+
+stop_logging() { LOG_ACTIVE=0; }
+
+start_stress() {
+    if ! command -v stress-ng &>/dev/null; then
+        STRESS_ERROR="stress-ng not found (apt install stress-ng)"; return 1
+    fi
+    stress-ng --cpu "$(nproc)" --timeout 0 &>/dev/null &
+    STRESS_PID=$!; PHASE="LOAD"; STRESS_ERROR=""
+}
+
+stop_stress() {
+    [[ "$STRESS_PID" -ne 0 ]] && kill "$STRESS_PID" 2>/dev/null && wait "$STRESS_PID" 2>/dev/null
+    STRESS_PID=0; PHASE="COOLDOWN"; COOLDOWN_START=$(date '+%s')
+}
+
+# analyze_csv <file> <mode>
+# mode: "screen" — overlay in terminal, wait for keypress
+#       "stdout" — print to stdout
+analyze_csv() {
+    local csvfile="$1" mode="$2"
+
+    # Pass 1: per-phase averages and peaks via awk
+    local stats
+    stats=$(awk -F',' '
+    NR==1 { next }
+    {
+        phase=$2; t1=$3+0; t6=$4+0; pkg=$7+0; pwm1=$8+0; pwm7=$9+0
+        cnt[phase]++
+        sum_t1[phase]+=t1; sum_t6[phase]+=t6; sum_pkg[phase]+=pkg
+        if (t1   > peak_t1[phase])   peak_t1[phase]=t1
+        if (t6   > peak_t6[phase])   peak_t6[phase]=t6
+        if (pkg  > peak_pkg[phase])  peak_pkg[phase]=pkg
+        if (pwm7 > peak_pwm7[phase]) peak_pwm7[phase]=pwm7
+        if (pwm1 > peak_pwm1[phase]) peak_pwm1[phase]=pwm1
+        if (phase=="IDLE" && pwm7 > idle_pwm7_max) idle_pwm7_max=pwm7
+    }
+    END {
+        for (p in cnt) {
+            avg_t1[p]  = (cnt[p]>0) ? int(sum_t1[p]/cnt[p])  : 0
+            avg_t6[p]  = (cnt[p]>0) ? int(sum_t6[p]/cnt[p])  : 0
+            avg_pkg[p] = (cnt[p]>0) ? int(sum_pkg[p]/cnt[p]) : 0
+        }
+        printf "IDLE_T1_AVG=%d\n",    avg_t1["IDLE"]+0
+        printf "IDLE_T6_AVG=%d\n",    avg_t6["IDLE"]+0
+        printf "IDLE_PKG_AVG=%d\n",   avg_pkg["IDLE"]+0
+        printf "LOAD_T1_AVG=%d\n",    avg_t1["LOAD"]+0
+        printf "LOAD_T6_AVG=%d\n",    avg_t6["LOAD"]+0
+        printf "LOAD_PKG_AVG=%d\n",   avg_pkg["LOAD"]+0
+        printf "LOAD_T1_PEAK=%d\n",   peak_t1["LOAD"]+0
+        printf "LOAD_T6_PEAK=%d\n",   peak_t6["LOAD"]+0
+        printf "LOAD_PKG_PEAK=%d\n",  peak_pkg["LOAD"]+0
+        printf "LOAD_PWM7_PEAK=%d\n", peak_pwm7["LOAD"]+0
+        printf "LOAD_PWM1_PEAK=%d\n", peak_pwm1["LOAD"]+0
+        printf "IDLE_PWM7_BASE=%d\n", idle_pwm7_max+0
+    }
+    ' "$csvfile")
+    eval "$stats"
+
+    # Pass 2: fan lag — seconds from first LOAD row until pwm7 rises >10% above idle baseline
+    local idle_pwm7_base_raw="${IDLE_PWM7_BASE:-0}"
+    local threshold=$(( idle_pwm7_base_raw + 26 ))   # ~10% of 255
+    local load_start_epoch="" rise_epoch="" lag_sec="N/A"
+
+    while IFS=',' read -r ts phase t1 t6 t7 t8 pkg pwm1 pwm7 f1 f2 f3 f4 f7 f8; do
+        [[ "$ts" == "timestamp" ]] && continue
+        if [[ "$phase" == "LOAD" && -z "$load_start_epoch" ]]; then
+            load_start_epoch=$(date -d "$ts" '+%s' 2>/dev/null || echo 0)
+        fi
+        if [[ "$phase" == "LOAD" && -n "$load_start_epoch" && -z "$rise_epoch" ]]; then
+            if [[ "$pwm7" -gt "$threshold" ]]; then
+                rise_epoch=$(date -d "$ts" '+%s' 2>/dev/null || echo 0)
+            fi
+        fi
+    done < "$csvfile"
+
+    if [[ -n "$load_start_epoch" && -n "$rise_epoch" && \
+          "$load_start_epoch" -gt 0 && "$rise_epoch" -gt 0 ]]; then
+        lag_sec=$(( rise_epoch - load_start_epoch ))
+    fi
+
+    # Verdict thresholds from parsed fancontrol
+    local cpu_maxtemp="${FC_MAXTEMP[pwm7]:-85}"
+    local drv_maxtemp="${FC_MAXTEMP[pwm1]:-50}"
+    local cpu_margin=$(( cpu_maxtemp - LOAD_T1_PEAK ))
+    local drv_margin=$(( drv_maxtemp - LOAD_T6_PEAK ))
+
+    local cpu_verdict drv_verdict lag_verdict pwm_suggest
+    if   [[ "$cpu_margin" -ge 10 ]]; then
+        cpu_verdict="${G}[OK]${N}   CPU margin ${cpu_margin}°C vs MAXTEMP ${cpu_maxtemp}°C"
+    elif [[ "$cpu_margin" -ge 5  ]]; then
+        cpu_verdict="${Y}[WARN]${N} CPU margin ${cpu_margin}°C vs MAXTEMP ${cpu_maxtemp}°C"
+    else
+        cpu_verdict="${R}[CRIT]${N} CPU margin only ${cpu_margin}°C vs MAXTEMP ${cpu_maxtemp}°C"
+    fi
+
+    if   [[ "$drv_margin" -ge 10 ]]; then
+        drv_verdict="${G}[OK]${N}   Drive margin ${drv_margin}°C vs MAXTEMP ${drv_maxtemp}°C"
+    elif [[ "$drv_margin" -ge 5  ]]; then
+        drv_verdict="${Y}[WARN]${N} Drive margin ${drv_margin}°C vs MAXTEMP ${drv_maxtemp}°C"
+    else
+        drv_verdict="${R}[CRIT]${N} Drive margin only ${drv_margin}°C vs MAXTEMP ${drv_maxtemp}°C"
+    fi
+
+    if [[ "$lag_sec" == "N/A" ]]; then
+        lag_verdict="${D}[N/A]${N}  Fan lag not measurable (not enough LOAD data)"
+    elif [[ "$lag_sec" -le 30 ]]; then
+        lag_verdict="${G}[OK]${N}   Fan lag ${lag_sec}s"
+    else
+        lag_verdict="${Y}[WARN]${N} Fan lag ${lag_sec}s (>30s)"
+    fi
+
+    local minpwm7="${FC_MINPWM[pwm7]:-0}"
+    if [[ "$minpwm7" -gt 127 ]]; then
+        pwm_suggest="${Y}[SUGGEST]${N} pwm7 MINPWM=${minpwm7} ($(( minpwm7*100/255 ))%) — consider lowering for quieter idle"
+    else
+        pwm_suggest="${G}[OK]${N}   pwm7 MINPWM=${minpwm7} ($(( minpwm7*100/255 ))%)"
+    fi
+
+    # Render report
+    if [[ "$mode" == "screen" ]]; then
+        tput cup 0 0
+        tput ed
+    fi
+
+    local sep='═══════════════════════════════════════════════════════════════════'
+    printf "${BOLD}%s${N}\n" "$sep"
+    printf " Stress-test Analysis Report\n"
+    printf "${BOLD}%s${N}\n\n" "$sep"
+
+    printf "${W}Temperature summary:${N}\n"
+    printf "  %-22s  idle avg: %3d°C  load avg: %3d°C  load peak: %3d°C\n" \
+        "CPU zone (EC t1):" "$IDLE_T1_AVG" "$LOAD_T1_AVG" "$LOAD_T1_PEAK"
+    printf "  %-22s  idle avg: %3d°C  load avg: %3d°C  load peak: %3d°C\n" \
+        "Drive zone 1 (t6):" "$IDLE_T6_AVG" "$LOAD_T6_AVG" "$LOAD_T6_PEAK"
+    printf "  %-22s  idle avg: %3d°C  load avg: %3d°C  load peak: %3d°C\n\n" \
+        "CPU pkg (coretemp):" "$IDLE_PKG_AVG" "$LOAD_PKG_AVG" "$LOAD_PKG_PEAK"
+
+    printf "${W}Fan response:${N}\n"
+    printf "  PWM7 idle baseline: %3d/255  (%d%%)\n" \
+        "$idle_pwm7_base_raw" "$(( idle_pwm7_base_raw * 100 / 255 ))"
+    printf "  PWM7 load peak:     %3d/255  (%d%%)\n" \
+        "$LOAD_PWM7_PEAK" "$(( LOAD_PWM7_PEAK * 100 / 255 ))"
+    printf "  PWM1 load peak:     %3d/255  (%d%%)\n" \
+        "$LOAD_PWM1_PEAK" "$(( LOAD_PWM1_PEAK * 100 / 255 ))"
+    printf "  Fan lag:            %s s\n\n" "$lag_sec"
+
+    printf "${W}Verdict:${N}\n"
+    printf "  %b\n" "$cpu_verdict"
+    printf "  %b\n" "$drv_verdict"
+    printf "  %b\n" "$lag_verdict"
+    printf "  %b\n\n" "$pwm_suggest"
+
+    printf "${BOLD}%s${N}\n" "$sep"
+
+    if [[ "$mode" == "screen" ]]; then
+        printf "\n  ${D}Press any key to return...${N}"
+        read -r -s -n1
+    fi
+}
+
+# ── --analyze entry point (before find_hwmon, which requires the kernel module) ──
+if [[ "$1" == "--analyze" ]]; then
+    [[ -z "${2:-}" || ! -f "$2" ]] && { printf 'Usage: qnap-monitor --analyze <file.csv>\n' >&2; exit 1; }
+    parse_fancontrol
+    analyze_csv "$2" "stdout"
+    exit 0
+fi
+
+INTERVAL=${1:-2}
+
+# ── Hardware detection ────────────────────────────────────────────────────────
+HW=$(find_hwmon "qnap_ec")   || { printf 'ERROR: qnap_ec hwmon not found (is qnap-ec module loaded?)\n' >&2; exit 1; }
+CT=$(find_hwmon "coretemp")  || { printf 'ERROR: coretemp hwmon not found\n' >&2; exit 1; }
+
+# ── Detect physical cores from coretemp ──────────────────────────────────────
+# Map "Core N" labels to HT thread lists from thread_siblings_list
 for _f in "$CT"/temp*_input; do
     _label=$(cat "${_f/_input/_label}" 2>/dev/null) || continue
     [[ "$_label" =~ ^Core[[:space:]]+([0-9]+)$ ]] || continue
@@ -120,21 +331,24 @@ done
 IFS=$'\n' read -r -d '' -a CORE_IDS \
     < <(printf '%s\n' "${!CORE_TEMP[@]}" | sort -n && printf '\0')
 
-# ── CPU info (static, read once at startup) ───────────────────────────────
+# ── CPU info (static, read once at startup) ───────────────────────────────────
 _cpu_model=$(awk -F': ' '/^model name/{print $2; exit}' /proc/cpuinfo \
     | sed 's/Intel(R) //; s/Xeon(R) /Xeon /; s/Core(TM) //; s/ CPU / /; s/(R)//g; s/(TM)//g; s/  */ /g; s/ *$//')
 _cpu_cores=$(awk -F': ' '/^cpu cores/{print $2; exit}' /proc/cpuinfo)
 _cpu_threads=$(awk -F': ' '/^siblings/{print $2; exit}' /proc/cpuinfo)
 CPU_INFO="${_cpu_model} · ${_cpu_cores}C/${_cpu_threads}T"
 
-# Initial read
+# ── Parse fancontrol ──────────────────────────────────────────────────────────
+parse_fancontrol
+
+# ── Initial CPU stats ─────────────────────────────────────────────────────────
 read_cpu_stats
 save_cpu_stats
 FIRST_RUN=1
 
 # ── Terminal ──────────────────────────────────────────────────────────────────
 tput civis; tput smcup
-trap 'tput rmcup; tput cnorm; exit 0' INT TERM EXIT
+trap '[[ ${STRESS_PID:-0} -ne 0 ]] && kill "$STRESS_PID" 2>/dev/null; tput rmcup; tput cnorm; exit 0' INT TERM EXIT
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 while true; do
@@ -144,11 +358,34 @@ while true; do
     NOW=$(date '+%Y-%m-%d %H:%M:%S')
     COLS=$(tput cols)
 
+    # COOLDOWN → IDLE transition: temp recovered or 5-minute timeout
+    if [[ "$PHASE" == "COOLDOWN" ]]; then
+        _elapsed=$(( $(date '+%s') - COOLDOWN_START ))
+        _t1_now=$(read_temp "$HW/temp1_input")
+        if [[ "$_t1_now" -le $(( ${FC_MINTEMP[pwm7]:-45} + 5 )) || "$_elapsed" -ge 300 ]]; then
+            PHASE="IDLE"
+        fi
+    fi
+
     # Header
     printf "${REV}${BOLD}  QNAP TVS-h1288X | Thermal & Fan Monitor | %-*s  ${N}\n" \
         $(( COLS - 47 )) "$NOW"
-    printf "${D}  Interval: ${INTERVAL}s  |  q = quit%-*s${N}\n\n" \
-        $(( COLS - 33 )) ""
+
+    # Second header line — status indicators + key hints
+    printf "  "
+    [[ "$LOG_ACTIVE" -eq 1 ]] && printf "${R}[LOG ●]${N} "
+    [[ "$STRESS_PID" -ne 0 ]] && printf "${Y}[STRESS]${N} "
+    [[ "$PHASE" != "IDLE"  ]] && printf "${C}[${PHASE}]${N} "
+    [[ -n "$STRESS_ERROR"  ]] && printf "${Y}${STRESS_ERROR}${N} "
+    printf "${D}Interval: ${INTERVAL}s  |  q=quit l=log s=stress${N}\n\n"
+
+    # Pre-read fan RPMs (needed for CSV; display reuses cat output below)
+    fan1=$(cat "$HW/fan1_input" 2>/dev/null || echo 0)
+    fan2=$(cat "$HW/fan2_input" 2>/dev/null || echo 0)
+    fan3=$(cat "$HW/fan3_input" 2>/dev/null || echo 0)
+    fan4=$(cat "$HW/fan4_input" 2>/dev/null || echo 0)
+    fan7=$(cat "$HW/fan7_input" 2>/dev/null || echo 0)
+    fan8=$(cat "$HW/fan8_input" 2>/dev/null || echo 0)
 
     # ── CPU ───────────────────────────────────────────────────────────────────
     _cpu_hdr="  -- CPU -- [${CPU_INFO}] "
@@ -203,9 +440,9 @@ while true; do
     t7=$(read_temp "$HW/temp7_input")
     t8=$(read_temp "$HW/temp8_input")
 
-    printf "  %-20s $(temp_color $t1 75 90)%3d C${N}  " "CPU zone (EC):"  "$t1"; bar "$t1" 100 22; echo ""
-    printf "  %-20s $(temp_color $t6 45 55)%3d C${N}  " "Drive zone 1:"   "$t6"; bar "$t6"  60 22; echo ""
-    printf "  %-20s $(temp_color $t7 45 55)%3d C${N}  " "Drive zone 2:"   "$t7"; bar "$t7"  60 22; echo ""
+    printf "  %-20s $(temp_color $t1 75 90)%3d C${N}  " "CPU zone (EC):"    "$t1"; bar "$t1" 100 22; echo ""
+    printf "  %-20s $(temp_color $t6 45 55)%3d C${N}  " "Drive zone 1:"     "$t6"; bar "$t6"  60 22; echo ""
+    printf "  %-20s $(temp_color $t7 45 55)%3d C${N}  " "Drive zone 2:"     "$t7"; bar "$t7"  60 22; echo ""
     printf "  %-20s $(temp_color $t8 30 40)%3d C${N}  " "Ambient (intake):" "$t8"; bar "$t8"  45 22; echo ""
     echo ""
 
@@ -232,6 +469,15 @@ while true; do
     done
     echo ""
 
+    # ── CSV append ────────────────────────────────────────────────────────────
+    if [[ "$LOG_ACTIVE" -eq 1 ]]; then
+        printf '%s,%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n' \
+            "$(date '+%Y-%m-%d %H:%M:%S')" "$PHASE" \
+            "$t1" "$t6" "$t7" "$t8" "$pkg" "$pwm1" "$pwm7" \
+            "$fan1" "$fan2" "$fan3" "$fan4" "$fan7" "$fan8" \
+            >> "$LOG_FILE"
+    fi
+
     # ── Drives (top 5 hottest) ────────────────────────────────────────────────
     printf "${W}${BOLD}  -- Drives (top 5 hottest) -----------------------------------------${N}\n"
 
@@ -257,11 +503,14 @@ while true; do
     # ── Status ────────────────────────────────────────────────────────────────
     fc_status=$(systemctl is-active fancontrol 2>/dev/null)
     if [ "$fc_status" = "active" ]; then
-        printf "  ${G}[OK] fancontrol active${N}\n"
+        printf "  ${G}[OK] fancontrol active${N}"
     else
-        printf "  ${R}[!!] fancontrol INACTIVE${N}\n"
+        printf "  ${R}[!!] fancontrol INACTIVE${N}"
     fi
-    printf "\n  ${D}q = quit  |  Ctrl+C = interrupt${N}\n"
+    if [[ "$LOG_ACTIVE" -eq 1 ]]; then
+        printf "   ${D}Logging → %s${N}" "$LOG_FILE"
+    fi
+    printf "\n  ${D}q=quit  l=log  s=stress  |  Ctrl+C = interrupt${N}\n"
 
     # Save stats and wait
     save_cpu_stats
@@ -269,5 +518,18 @@ while true; do
     tput ed
 
     read -r -s -n1 -t "$INTERVAL" key 2>/dev/null
-    [ "$key" = "q" ] && break
+    case "$key" in
+        q|Q) break ;;
+        l|L)
+            if [[ "$LOG_ACTIVE" -eq 0 ]]; then
+                start_logging
+            else
+                stop_logging
+                analyze_csv "$LOG_FILE" "screen"
+            fi ;;
+        s|S)
+            if [[ "$STRESS_PID" -eq 0 ]]; then start_stress
+            else stop_stress; fi ;;
+    esac
+
 done
