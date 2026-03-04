@@ -119,8 +119,10 @@ systemctl status fancontrol --no-pager
 
 echo ""
 echo "=== 12. Install qnap-monitor ==="
-install -o root -g root -m 755 "$SCRIPT_DIR/qnap-monitor" /usr/local/bin/qnap-monitor
-echo "  Installed: /usr/local/bin/qnap-monitor"
+MONITOR_VERSION=$(git -C "$SCRIPT_DIR" describe --tags --always 2>/dev/null || echo "dev")
+sed "s/@VERSION@/${MONITOR_VERSION}/g" "$SCRIPT_DIR/qnap-monitor" > /usr/local/bin/qnap-monitor
+chmod 755 /usr/local/bin/qnap-monitor
+echo "  Installed: /usr/local/bin/qnap-monitor (${MONITOR_VERSION})"
 
 echo ""
 echo "=== 13. Install qnap-watchdog ==="

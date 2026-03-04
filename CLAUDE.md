@@ -27,8 +27,8 @@ Sudo on the PVE host requires a password — use `ssh -t` for interactive sudo c
 After any change, update the host:
 
 ```bash
-# Pull repo on host and reinstall qnap-monitor
-ssh -t <pve-host> "cd ~/qnap-ec-fan-monitor && git pull && sudo install -m 755 qnap-monitor /usr/local/bin/qnap-monitor"
+# Pull repo on host and reinstall qnap-monitor (with version embedding)
+ssh -t <pve-host> "cd ~/qnap-ec-fan-monitor && git pull && VER=\$(git describe --tags --always 2>/dev/null || echo dev) && sed \"s/@VERSION@/\$VER/g\" qnap-monitor | sudo tee /usr/local/bin/qnap-monitor > /dev/null && sudo chmod 755 /usr/local/bin/qnap-monitor"
 
 # After kernel module changes — full rebuild:
 ssh -t <pve-host> "cd ~/qnap-ec-fan-monitor && git pull && sudo make install && sudo systemctl restart fancontrol"
