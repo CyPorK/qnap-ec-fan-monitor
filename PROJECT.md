@@ -82,6 +82,13 @@ Detect dynamically: `grep -rl qnap_ec /sys/class/hwmon/*/name | head -1 | xargs 
 | pwm1 | 102 | ~40% | fan1-4 (chassis) |
 | pwm7 | 73 | ~29% | fan7-8 (CPU) |
 
+> **IT8528 hardware thermal override**: The EC chip has its own internal fan protection
+> that activates when CPU temperature exceeds an internal threshold (~80–85°C). When triggered,
+> the EC ramps **all fans** (including chassis) to 100% regardless of what fancontrol/software set.
+> `ec_sys_get_fan_pwm()` returns the software **setpoint** (what fancontrol wrote), not the
+> hardware-applied PWM. The actual fan RPM is the ground truth — if RPM is high while reported
+> PWM% is low, the EC override is active. `qnap-monitor` marks this condition as `[EC↑]`.
+
 ---
 
 ## Installed files

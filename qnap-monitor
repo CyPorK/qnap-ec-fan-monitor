@@ -499,8 +499,18 @@ while true; do
 
     pwm1=$(cat "$HW/pwm1" 2>/dev/null || echo 0)
     pwm7=$(cat "$HW/pwm7" 2>/dev/null || echo 0)
+    _pwm1_pct=$(( pwm1 * 100 / 255 ))
+    _pwm7_pct=$(( pwm7 * 100 / 255 ))
 
-    printf "  ${C}Chassis (PWM %3d%%)${N}\n" $(( pwm1 * 100 / 255 ))
+    # EC hardware override detection: IT8528 ramps all fans on high CPU temp regardless
+    # of what fancontrol wrote. ec_sys_get_fan_pwm returns the software setpoint, not
+    # the actual hardware PWM — so RPM is the ground truth.
+    # Flag when actual RPM% exceeds software PWM% by >40 points.
+    _ec1_flag="" _ec7_flag=""
+    (( fan1 > 0 && fan1 * 100 / 3000 > _pwm1_pct + 40 )) && _ec1_flag="  ${Y}[EC↑]${N}"
+    (( fan7 > 0 && fan7 * 100 / 3000 > _pwm7_pct + 40 )) && _ec7_flag="  ${Y}[EC↑]${N}"
+
+    printf "  ${C}Chassis (PWM %3d%%)${N}${_ec1_flag}\n" "$_pwm1_pct"
     for i in 1 2 3 4; do
         f="$HW/fan${i}_input"; [ -f "$f" ] || continue
         rpm=$(cat "$f")
@@ -508,7 +518,7 @@ while true; do
         bar "$rpm" 3000 22; echo ""
     done
 
-    printf "  ${C}CPU fan (PWM %3d%%)${N}\n" $(( pwm7 * 100 / 255 ))
+    printf "  ${C}CPU fan (PWM %3d%%)${N}${_ec7_flag}\n" "$_pwm7_pct"
     for i in 7 8; do
         f="$HW/fan${i}_input"; [ -f "$f" ] || continue
         rpm=$(cat "$f")
