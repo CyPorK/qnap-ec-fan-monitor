@@ -404,7 +404,7 @@ while true; do
     [[ "$PHASE" != "IDLE"  ]] && printf "${C}[${PHASE}]${N} "
     [[ -n "$STRESS_ERROR"  ]] && printf "${Y}${STRESS_ERROR}${N} "
     local stress_hint; [[ "$HAS_STRESS_NG" -eq 1 ]] && stress_hint="s=stress" || stress_hint="s=stress (!)"
-    printf "${D}Interval: ${INTERVAL}s  |  q=quit l=log ${stress_hint}  |  v${VERSION}${N}\n\n"
+    printf "${D}Interval: ${INTERVAL}s  |  q=quit l=log ${stress_hint}  |  ${VERSION}${N}\n\n"
 
     # Pre-read fan RPMs (needed for CSV; display reuses cat output below)
     fan1=$(cat "$HW/fan1_input" 2>/dev/null || echo 0)
