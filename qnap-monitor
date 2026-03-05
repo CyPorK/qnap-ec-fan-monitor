@@ -12,7 +12,7 @@ BOLD='\033[1m' REV='\033[7m' BLINK='\033[5m'
 VERSION="@VERSION@"
 
 # ── Logging / stress state ────────────────────────────────────────────────────
-LOG_ACTIVE=0; LOG_FILE=""; STRESS_PID=0; STRESS_ERROR=""
+LOG_ACTIVE=0; LOG_FILE=""; LAST_LOG_FILE=""; STRESS_PID=0; STRESS_ERROR=""
 command -v stress-ng &>/dev/null && HAS_STRESS_NG=1 || HAS_STRESS_NG=0
 PHASE="IDLE"; COOLDOWN_START=0
 
@@ -426,7 +426,8 @@ while true; do
     [[ "$PHASE" != "IDLE"  ]] && printf "${C}[${PHASE}]${N} "
     [[ -n "$STRESS_ERROR"  ]] && printf "${Y}${STRESS_ERROR}${N} "
     stress_hint="s=stress"; [[ "$HAS_STRESS_NG" -eq 0 ]] && stress_hint="s=stress (!)"
-    printf "${D}Interval: ${INTERVAL}s  |  q=quit l=log ${stress_hint}  |  ${VERSION}${N}\033[K\n\n"
+    report_hint=""; [[ -n "$LAST_LOG_FILE" ]] && report_hint="  r=report"
+    printf "${D}Interval: ${INTERVAL}s  |  q=quit l=log ${stress_hint}${report_hint}  |  ${VERSION}${N}\033[K\n\n"
 
     # Pre-read fan RPMs (needed for CSV; display reuses cat output below)
     fan1=$(cat "$HW/fan1_input" 2>/dev/null || echo 0)
@@ -596,8 +597,11 @@ while true; do
                 start_logging
             else
                 stop_logging
-                analyze_csv "$LOG_FILE" "screen"
+                LAST_LOG_FILE="$LOG_FILE"
+                analyze_csv "$LAST_LOG_FILE" "screen"
             fi ;;
+        r|R)
+            [[ -n "$LAST_LOG_FILE" ]] && analyze_csv "$LAST_LOG_FILE" "screen" ;;
         s|S)
             if [[ "$STRESS_PID" -eq 0 ]]; then start_stress
             else stop_stress; fi ;;
