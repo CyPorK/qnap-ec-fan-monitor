@@ -425,9 +425,7 @@ while true; do
     [[ "$STRESS_PID" -ne 0 ]] && printf "${Y}[STRESS]${N} "
     [[ "$PHASE" != "IDLE"  ]] && printf "${C}[${PHASE}]${N} "
     [[ -n "$STRESS_ERROR"  ]] && printf "${Y}${STRESS_ERROR}${N} "
-    stress_hint="s=stress"; [[ "$HAS_STRESS_NG" -eq 0 ]] && stress_hint="s=stress (!)"
-    report_hint=""; [[ -n "$LAST_LOG_FILE" ]] && report_hint=" r=report"
-    printf "${D}Interval: ${INTERVAL}s  |  q=quit l=log ${stress_hint}${report_hint}  |  ${VERSION}${N}\033[K\n\n"
+    printf "${D}Interval: ${INTERVAL}s  |  ${VERSION}${N}\033[K\n\n"
 
     # Pre-read fan RPMs (needed for CSV; display reuses cat output below)
     fan1=$(cat "$HW/fan1_input" 2>/dev/null || echo 0)
@@ -582,8 +580,9 @@ while true; do
     if [[ "$LOG_ACTIVE" -eq 1 ]]; then
         printf "   ${D}Logging → %s${N}" "$LOG_FILE"
     fi
-    _bottom_report=""; [[ -n "$LAST_LOG_FILE" ]] && _bottom_report=" r=report"
-    printf "\033[K\n  ${D}q=quit  l=log  s=stress${_bottom_report}  |  Ctrl+C = interrupt${N}\033[K\n"
+    _stress_hint="s=stress"; [[ "$HAS_STRESS_NG" -eq 0 ]] && _stress_hint="s=stress (!)"
+    _report_hint=""; [[ -n "$LAST_LOG_FILE" ]] && _report_hint="  r=report"
+    printf "\033[K\n  ${D}q=quit  l=log  ${_stress_hint}${_report_hint}  |  Ctrl+C = interrupt${N}\033[K\n"
 
     # Save stats and wait
     save_cpu_stats
