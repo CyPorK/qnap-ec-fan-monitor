@@ -224,6 +224,9 @@ analyze_csv() {
         printf "COOLDOWN_CNT=%d\n",   cnt["COOLDOWN"]+0
     }
     ' "$csvfile")
+    # eval is safe here: awk outputs only lines of the form VARNAME=<integer>
+    # (variable names are string literals in awk code; values use %d / +0 arithmetic,
+    # so CSV content cannot inject shell code regardless of input)
     eval "$stats"
 
     # Duration from first/last CSV data rows
