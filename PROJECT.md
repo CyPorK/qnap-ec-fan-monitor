@@ -87,7 +87,7 @@ Detect dynamically: `grep -rl qnap_ec /sys/class/hwmon/*/name | head -1 | xargs 
 > the EC ramps **all fans** (including chassis) to 100% regardless of what fancontrol/software set.
 > `ec_sys_get_fan_pwm()` returns the software **setpoint** (what fancontrol wrote), not the
 > hardware-applied PWM. The actual fan RPM is the ground truth — if RPM is high while reported
-> PWM% is low, the EC override is active. `qnap-monitor` marks this condition as `[EC↑]`.
+> PWM% is low, the EC override is active. `qnap-monitor` marks this condition as `[↑EC override↑]`.
 
 ---
 
@@ -127,11 +127,13 @@ Installed and running since 2026-02-28.
 - Drives at 32°C → chassis fans ~1800 RPM (37% PWM)
 - CPU zone at 79°C → CPU fans ~2330 RPM (80% PWM)
 
-#### Rebuilding after a kernel update
-After every PVE kernel update, rebuild and reinstall the module:
+#### After a kernel update
+
+DKMS rebuilds the module automatically — no action needed.
+
+If the auto-build fails (e.g. headers not yet installed):
 ```bash
-cd ~/qnap-ec-fan-monitor && sudo make install
-sudo systemctl restart fancontrol
+sudo apt install pve-headers-$(uname -r) && sudo dkms install qnap-ec/1.1.2
 ```
 
 ### 2. Live dashboard — qnap-monitor ✅ DONE

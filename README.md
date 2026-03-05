@@ -121,7 +121,7 @@ This repo installs a **kernel module** (ring 0 — full system access). Before r
 - Review the driver source: `qnap-ec.c`, `qnap-ec-helper.c`
 - Note that `libuLinux_hal.so` is a closed-source binary from QNAP (extracted from TS-873A firmware)
 - Only install on systems you own and control
-- The module is loaded automatically on boot via `/etc/modules` — removing it requires `sudo make uninstall`
+- The module is loaded automatically on boot via `/etc/modules` — removing it requires `sudo bash uninstall.sh`
 
 ---
 
