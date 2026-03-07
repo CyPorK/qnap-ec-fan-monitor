@@ -19,29 +19,9 @@ extremely loud. This repo provides everything needed to fix that.
 
 ### qnap-monitor
 
+A `top`-like live dashboard for temperatures, fan RPMs, PWM curves, CPU load, and EC hardware override detection.
+
 ![qnap-monitor demo](docs/demo.gif)
-
-A `top`-like dashboard that refreshes every 2 seconds:
-
-```
-  -- CPU ------------------------------------------------------------------
-  Package:   61°C  [████████████░░░░░░░░]  61%   Total load: [███░░░░░░░░░░░░]  19%
-             temp              load cpu N (HT)       load cpu N+6 (HT)
-  Core 0:   56°C  [███████████░░░░░░░░░]  56%  cpu0 [██░░░░░░░░]  19%  cpu6 [██░░░░░░░░]  21%
-  ...
-
-  -- EC Chip (IT8528) ---------------------------------------------------
-  CPU zone (EC):    54°C  [███████████░░░░░░░░░░░]  54%
-  Drive zone 1:     29°C  [██████████░░░░░░░░░░░░]  48%
-  Ambient (intake): 20°C  [█████████░░░░░░░░░░░░░]  44%
-
-  -- Fans ---------------------------------------------------------------
-  Chassis (PWM  30%)
-    fan1:           1488 RPM  [██████████░░░░░░░░░░░░]  49%
-  ...
-
-  [OK] fancontrol active
-```
 
 Install globally:
 ```bash
