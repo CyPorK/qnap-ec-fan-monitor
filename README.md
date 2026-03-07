@@ -19,6 +19,8 @@ extremely loud. This repo provides everything needed to fix that.
 
 ### qnap-monitor
 
+![qnap-monitor demo](docs/demo.gif)
+
 A `top`-like dashboard that refreshes every 2 seconds:
 
 ```
