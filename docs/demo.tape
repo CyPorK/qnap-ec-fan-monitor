@@ -5,8 +5,8 @@
 Output docs/demo.gif
 
 Set FontSize 13
-Set Width 1200
-Set Height 900
+Set Width 871
+Set Height 782
 Set Theme "Catppuccin Mocha"
 Set Framerate 15
 
